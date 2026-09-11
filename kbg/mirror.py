@@ -74,7 +74,9 @@ def main():
                     f"mirror_at: {time.strftime('%Y-%m-%d %H:%M')}\n---\n\n{content}\n")
         mirror["seen"][n["node_token"]] = str(n.get("obj_edit_time", ""))
         exported += 1
-        yaml.safe_dump(state, open(cfg["paths"]["state"], "w", encoding="utf-8"),
+        disk = yaml.safe_load(open(cfg["paths"]["state"], encoding="utf-8"))
+        disk["mirror"] = mirror
+        yaml.safe_dump(disk, open(cfg["paths"]["state"], "w", encoding="utf-8"),
                        allow_unicode=True, sort_keys=False)  # 每篇落盘防中断丢进度
     print(f"镜像完成：本次新导 {exported} 篇，累计 {len(mirror['seen'])} 篇 → {backup}")
 
