@@ -1,0 +1,26 @@
+name: mirror
+on:
+  schedule:
+    - cron: '0 13 * * *'    # UTC13:00 = 北京21:00 每日镜像
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: 镜像记忆承载合集
+        run: python -m kbg.mirror
+      - name: 提交镜像MD
+        run: |
+          git config user.name "kbg-bot"
+          git config user.email "kbg-bot@users.noreply.github.com"
+          git add state.yaml MD备份/ || true
+          git diff --cached --quiet || git commit -m "mirror update $(date -u +%FT%TZ)"
+          git push
