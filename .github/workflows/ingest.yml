@@ -1,0 +1,32 @@
+name: ingest
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # UTC每5分钟（GitHub侧可能有数分钟调度延迟）
+  workflow_dispatch: {}      # 支持手动触发
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 跑一轮入库
+        run: python -m kbg.ingest --once
+      - name: 增量导出MD语料
+        run: python -m kbg.export_md
+      - name: 失败时飞书告警
+        if: failure()
+        run: python kbg/alert.py "ingest运行失败"
+      - name: 提交状态与备份
+        run: |
+          git config user.name "kbg-bot"
+          git config user.email "kbg-bot@users.noreply.github.com"
+          git add state.yaml MD备份/ || true
+          git diff --cached --quiet || git commit -m "state update $(date -u +%FT%TZ)"
+          git push
