@@ -64,7 +64,9 @@ def main():
 
     with open(os.path.join(backup, "_索引.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(index_lines) + "\n")
-    yaml.safe_dump(state, open(cfg["paths"]["state"], "w", encoding="utf-8"),
+    disk = yaml.safe_load(open(cfg["paths"]["state"], encoding="utf-8"))
+    disk["export"] = seen
+    yaml.safe_dump(disk, open(cfg["paths"]["state"], "w", encoding="utf-8"),
                    allow_unicode=True, sort_keys=False)
     print(f"MD导出完成：新增/更新 {exported} 篇，未变更跳过 {skipped} 篇 → {backup}")
 
