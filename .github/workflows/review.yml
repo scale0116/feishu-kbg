@@ -4,7 +4,7 @@ on:
     - cron: '30 14 * * 0'   # UTC周日14:30 = 北京周日22:30
   workflow_dispatch: {}
 permissions:
-  contents: write
+  contents: read
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -14,13 +14,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
       - run: pip install -r requirements.txt
+      - name: 拉取私有数据
+        run: |
+          git clone --depth 1 https://x-access-token:${{ secrets.DATA_PAT }}@github.com/scale0116/personal-knowledge-base.git data
+          cp data/config.yaml data/state.yaml .
       - name: 生成本周复盘
         run: python -m kbg.review
-      - name: 提交复盘MD
+      - name: 数据回写
         run: |
-          git config user.name "kbg-bot"
-          git config user.email "kbg-bot@users.noreply.github.com"
-          git add state.yaml MD备份/ || true
+          cp state.yaml data/
+          cd data
+          git config user.name kbg-bot
+          git config user.email kbg-bot@users.noreply.github.com
+          git add -A
           git diff --cached --quiet || git commit -m "weekly review $(date -u +%FT%TZ)"
           git push
