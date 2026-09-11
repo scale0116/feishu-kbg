@@ -44,8 +44,11 @@ def load_state(cfg):
 
 
 def save_state(cfg, state):
-    yaml.safe_dump(state, open(cfg["paths"]["state"], "w", encoding="utf-8"),
-                   allow_unicode=True, sort_keys=False)
+    """只回写ingest段，绝不覆盖user段（令牌由load_user_token专用通道维护）。"""
+    p = cfg["paths"]["state"]
+    disk = yaml.safe_load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
+    disk["ingest"] = state.get("ingest", {})
+    yaml.safe_dump(disk, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
 
 
 def doc_blocks(lines: list) -> list:
