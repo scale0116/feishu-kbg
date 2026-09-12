@@ -114,9 +114,34 @@ def ingest_url(fs, cfg, state, ing, url: str, thoughts: str = "") -> str:
 
 
 def poll_once(fs, cfg, state, ing):
-    """单次轮询：处理自上个游标以来的全部新消息。"""
+    """单次轮询：处理自上个游标以来的全部新消息 + 重试历史失败项。"""
     # 每轮重新加载最新用户token（带锁，自动刷新），多进程/多脚本共存安全
     fs.load_user_token(cfg["paths"]["state"])
+
+    # 1. 重试历史失败项（最多3次，通道恢复后自动补入库）
+    retries = ing.setdefault("retry", {})
+    for key in list(retries.keys()):
+        item = retries[key]
+        if item["attempts"] >= 3:
+            retries.pop(key)
+            print(f"放弃重试（3次失败）: {item['url'][:50]}", flush=True)
+            continue
+        print(f"重试历史失败项: {item['url'][:50]}", flush=True)
+        item["attempts"] += 1
+        try:
+            reply = ingest_url(fs, cfg, state, ing, item["url"])
+            retries.pop(key)
+            print(reply, flush=True)
+            try:
+                fs.send_text(ing["chat_id"], reply[:400])
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"重试仍失败: {e}", flush=True)
+    retries = {k: v for k, v in retries.items() if v["attempts"] < 3}
+    ing["retry"] = retries
+
+    # 2. 新消息
     msgs = fs.list_messages(ing["chat_id"])
     msgs.reverse()  # 转为旧→新
     for m in msgs:
@@ -144,7 +169,9 @@ def poll_once(fs, cfg, state, ing):
             try:
                 reply = ingest_url(fs, cfg, state, ing, m_url.group(0), thoughts)
             except Exception as e:
-                reply = f"❌ 入库失败：{e}"
+                reply = f"❌ 入库失败（将自动重试，无需重发）：{e}"
+                ing.setdefault("retry", {})[re.sub(r"\W", "", m_url.group(0))[-64:] or m_url.group(0)] = {
+                    "url": m_url.group(0), "attempts": 1}
         elif text.startswith("思考"):
             # 显式标记：补充最近一篇文档的思考
             addition = text[2:].lstrip("：: ，")
