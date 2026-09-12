@@ -154,7 +154,7 @@ def poll_once(fs, cfg, state, ing):
         content = json.loads(m.get("body", {}).get("content", "{}"))
         text = content.get("text", "")
         # 跳过机器人自己的回执，防止自噬循环
-        if text.startswith(("✅", "❌", "⏭")):
+        if text.startswith(("✅", "❌", "⏭", "📥", "语料库", "库里", "📎")):
             ing["last_ts"] = str(ct)
             continue
         m_url = re.search(r"https?://\S+", text)
