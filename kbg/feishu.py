@@ -1,8 +1,18 @@
 """飞书开放平台 API 轻封装：token 管理 + 常用接口。"""
+import os
 import time
 import requests
 
 API = "https://open.feishu.cn/open-apis"
+
+
+def _atomic_dump_yaml(path: str, data: dict):
+    """state.yaml 原子写：先写临时文件再替换，进程中途被杀也不会留下空/半截文件。"""
+    import yaml
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, path)
 
 
 def _lock_fh(f, lock: bool):
@@ -50,8 +60,7 @@ class Feishu:
             state["expire_at"] = time.time() + int(r.get("expires_in", 6900))
             full = yaml.safe_load(open(self.state_path, encoding="utf-8"))
             full["user"] = state
-            yaml.safe_dump(full, open(self.state_path, "w", encoding="utf-8"),
-                           allow_unicode=True, sort_keys=False)
+            _atomic_dump_yaml(self.state_path, full)
             self._user_token = state["access_token"]
             return self._user_token
         finally:
@@ -91,8 +100,7 @@ class Feishu:
         state["expire_at"] = time.time() + int(r.get("expires_in", 6900))
         full = yaml.safe_load(open(self.state_path, encoding="utf-8"))
         full["user"] = state
-        yaml.safe_dump(full, open(self.state_path, "w", encoding="utf-8"),
-                       allow_unicode=True, sort_keys=False)
+        _atomic_dump_yaml(self.state_path, full)
         self._user_token = state["access_token"]
 
     def token(self) -> str:
