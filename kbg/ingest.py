@@ -48,11 +48,16 @@ def load_state(cfg):
 
 
 def save_state(cfg, state):
-    """只回写ingest段，绝不覆盖user段（令牌由load_user_token专用通道维护）。"""
+    """只回写ingest段，绝不覆盖user段（令牌由load_user_token专用通道维护）。原子写防截断。"""
     p = cfg["paths"]["state"]
     disk = yaml.safe_load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
+    if not isinstance(disk, dict):
+        raise RuntimeError("state.yaml内容异常，拒绝覆盖（保数据优先）")
     disk["ingest"] = state.get("ingest", {})
-    yaml.safe_dump(disk, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(disk, f, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, p)
 
 
 def doc_blocks(lines: list) -> list:
