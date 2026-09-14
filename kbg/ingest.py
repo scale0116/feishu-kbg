@@ -63,8 +63,26 @@ def doc_blocks(lines: list) -> list:
     return blocks
 
 
+def save_original(cfg, info: dict) -> str:
+    """原文全文存档：MD备份/原文/ —— 链接失效也有完整备份。"""
+    backup = os.path.join(cfg["paths"]["md_backup"], "原文")
+    os.makedirs(backup, exist_ok=True)
+    fname = time.strftime('%Y-%m-%d ') + re.sub(r'[\/:*?"<>|]', ' ', info['title']).strip()[:60] + ".md"
+    path = os.path.join(backup, fname)
+    with open(path, "w", encoding="utf-8") as f:
+        parts = ["---", "title: " + info["title"], "url: " + info["url"],
+                   "saved_at: " + time.strftime("%Y-%m-%d %H:%M"), "---", "",
+                   info["text"], ""]
+        f.write(chr(10).join(parts) + chr(10))
+    return path
+
+
 def ingest_url(fs, cfg, state, ing, url: str, thoughts: str = "") -> str:
     info = article_fetch(url)
+    try:
+        print("原文已存档: " + save_original(cfg, info), flush=True)
+    except Exception as e:
+        print("原文存档失败(继续): " + str(e)[:80], flush=True)
     key = re.sub(r"[^\w]", "", url)[-64:] or url
     if key in ing["done"]:
         return "⏭ 该链接已入库，跳过"
@@ -102,10 +120,14 @@ def ingest_url(fs, cfg, state, ing, url: str, thoughts: str = "") -> str:
         lines.append(f"【我的思考】：{thoughts.strip()}")
     else:
         lines.append("【我的思考】：")
-    lines += ["【关联知识点】：", f"【标签】：{tags}"]
-    # 用户知识库里的文档必须以用户身份写入
-    fs.ureq("POST", f"/docx/v1/documents/{doc_id}/blocks/{doc_id}/children",
-            json={"children": doc_blocks(lines)})
+    lines += ["【关联知识点】：", f"【标签】：{tags}", "",
+              "【原文全文】（自动存档，链接失效时以此为准）"]
+    lines += info["text"].splitlines()
+    blocks = doc_blocks(lines)
+    # 用户知识库里的文档必须以用户身份写入；单次最多50个block
+    for i in range(0, len(blocks), 50):
+        fs.ureq("POST", f"/docx/v1/documents/{doc_id}/blocks/{doc_id}/children",
+                json={"children": blocks[i:i + 50]})
 
     ing["done"][key] = {"title": title, "ts": time.strftime("%Y-%m-%d %H:%M")}
     ing["last_doc"] = {"doc_id": doc_id, "title": title}
