@@ -1,0 +1,62 @@
+name: build
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: build-chain
+  cancel-in-progress: true   # 同一时刻只允许一轮建档
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: 拉取私有数据
+        run: |
+          git clone --depth 1 https://x-access-token:${{ secrets.DATA_PAT }}@github.com/scale0116/personal-knowledge-base.git data
+          cp data/config.yaml data/state.yaml .
+      - name: 批量建档（每篇含完整原文）
+        env:
+          BUILD_CAP: '300'
+        run: python -m kbg.feishu_build
+      - name: 数据回写
+        if: always()
+        run: |
+          SZ=$(stat -c%s state.yaml 2>/dev/null || echo 0)
+          if [ "$SZ" -lt 20000 ]; then
+            echo "⚠ state.yaml仅${SZ}字节，疑似损坏，拒绝回写state"
+            exit 0
+          fi
+          cp state.yaml data/
+          cd data
+          git config user.name kbg-bot
+          git config user.email kbg-bot@users.noreply.github.com
+          git add -A
+          git diff --cached --quiet && { echo 无变更; exit 0; }
+          git commit -m "build update $(date -u +%FT%TZ)"
+          for i in 1 2 3; do
+            if git pull --rebase origin main; then git push && break; fi
+            git rebase --abort 2>/dev/null || true
+            echo "push冲突，10秒后重试($i)"
+            sleep 10
+          done
+      - name: 有剩余则自续链
+        if: always()
+        run: |
+          if [ -f BUILD_MORE ]; then
+            SLEEP=$((60 + RANDOM % 120))
+            echo "等待 ${SLEEP} 秒后触发下一轮（仍有待建档）"
+            sleep $SLEEP
+            for i in 1 2 3; do
+              curl -s -X POST -H "Authorization: token ${{ secrets.DATA_PAT }}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/scale0116/feishu-kbg/actions/workflows/build.yml/dispatches -d '{"ref":"main"}' && break
+              sleep 15
+            done
+          else
+            echo "建档已全部完成，链条收工"
+          fi
