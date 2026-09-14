@@ -18,6 +18,10 @@ article_fetch = article.fetch_smart
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOMAINS = ["量化投资", "AI运用", "副业赚钱", "个人成长"]
+# 2026-09-14用户开启自动归档：单一领域直接建进领域目录，多领域/待分类留00收件箱人工裁决
+DOMAIN_FOLDERS = {"量化投资": "01 量化投资", "AI运用": "02 AI运用",
+                  "副业赚钱": "03 副业赚钱", "个人成长": "04 个人成长"}
+INBOX = "00 收件箱"
 POLL_SECONDS = 20
 
 SUMMARY_PROMPT = (
@@ -99,14 +103,18 @@ def ingest_url(fs, cfg, state, ing, url: str, thoughts: str = "") -> str:
 
     domains = [d for d in ai.get("domains", []) if d in DOMAINS] or ["待分类"]
     tags = " / ".join(domains)
+    if len(domains) == 1 and domains[0] in DOMAIN_FOLDERS:
+        folder, where = DOMAIN_FOLDERS[domains[0]], f"已自动归档「{DOMAIN_FOLDERS[domains[0]]}」"
+    else:
+        folder, where = INBOX, "多领域/待复核，暂存「00 收件箱」"
     date = time.strftime("%Y-%m-%d")
     title = f"{date} {ai.get('title') or info['title']}"
 
-    # 在 00 收件箱下建文档
+    # 按领域归属建文档（自动归档见上）
     wiki = state["wiki"]
     node = fs.ureq("POST", f"/wiki/v2/spaces/{wiki['space_id']}/nodes",
                    json={"obj_type": "docx", "title": title, "node_type": "origin",
-                         "parent_node_token": wiki["folders"]["00 收件箱"]})
+                         "parent_node_token": wiki["folders"][folder]})
     doc_id = node["node"]["obj_token"]
 
     lines = [f"【来源】：公众号/网页｜链接：{url}",
@@ -132,7 +140,7 @@ def ingest_url(fs, cfg, state, ing, url: str, thoughts: str = "") -> str:
     ing["done"][key] = {"title": title, "ts": time.strftime("%Y-%m-%d %H:%M")}
     ing["last_doc"] = {"doc_id": doc_id, "title": title}
     suffix = "（已含你的思考）" if thoughts.strip() else ""
-    return f"✅ 已入库：{title}（{tags}）{suffix}"
+    return f"✅ 已入库：{title}（{tags}）{suffix}｜{where}"
 
 
 def poll_once(fs, cfg, state, ing):
