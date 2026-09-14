@@ -16,7 +16,7 @@ from kbg.feishu import Feishu  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_TOKEN = "RTJiwZw9HiggNYk37B4cm7rdnZY"   # 合集根节点（研越信息租户，外部共享）
-CAP_PER_RUN = 100000
+CAP_PER_RUN = 200
 
 
 def safe_name(t: str) -> str:
@@ -24,14 +24,20 @@ def safe_name(t: str) -> str:
 
 
 def write_state_best_effort(cfg, mirror_seen, prog):
-    """把镜像进度合并进 state.yaml（尽力而为，被同步盘锁住时跳过）。"""
+    """把镜像进度合并进 state.yaml（尽力而为）。校验+原子写：state损坏时拒绝覆盖，绝不推空文件。"""
     for attempt in range(24):
         try:
             cfg_path = cfg["paths"]["state"]
             disk = yaml.safe_load(open(cfg_path, encoding="utf-8"))
-            disk["mirror"] = {"seen": dict(list(mirror_seen.items())[:5000])}
-            yaml.safe_dump(disk, open(cfg_path, "w", encoding="utf-8"),
-                           allow_unicode=True, sort_keys=False)
+            if not isinstance(disk, dict) or "user" not in disk:
+                print(f"⚠ state.yaml内容异常(第{attempt+1}次)，拒绝覆盖，5秒后重试", flush=True)
+                time.sleep(5)
+                continue
+            disk["mirror"] = {"seen": dict(list(mirror_seen.items())[:12000])}
+            tmp = cfg_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                yaml.safe_dump(disk, f, allow_unicode=True, sort_keys=False)
+            os.replace(tmp, cfg_path)
             return True
         except Exception:
             time.sleep(5)
@@ -41,6 +47,8 @@ def write_state_best_effort(cfg, mirror_seen, prog):
 def main():
     cfg = yaml.safe_load(open(os.path.join(ROOT, "config.yaml"), encoding="utf-8"))
     state = yaml.safe_load(open(cfg["paths"]["state"], encoding="utf-8"))
+    if not isinstance(state, dict) or "user" not in state:
+        raise SystemExit("state.yaml缺失或损坏，拒绝运行（防止回写坏文件）")
     mirror = state.setdefault("mirror", {"seen": {}})
     fs = Feishu(cfg["feishu"]["app_id"], cfg["feishu"]["app_secret"])
     fs.load_user_token(cfg["paths"]["state"])
@@ -50,7 +58,10 @@ def main():
     prog_path = os.path.join(prog_dir, "mirror_progress.json")
     prog = {}
     if os.path.exists(prog_path):
-        prog = json.load(open(prog_path, encoding="utf-8"))
+        try:
+            prog = json.load(open(prog_path, encoding="utf-8"))
+        except Exception:
+            prog = {}  # 进度文件损坏时从头再对账，已导出的MD靠state里的seen去重
     seen_union = set(mirror["seen"].keys()) | set(prog.keys())
 
     # 1. 反查合集空间
@@ -102,7 +113,10 @@ def main():
                         f"mirror_at: {time.strftime('%Y-%m-%d %H:%M')}\n---\n\n{content}\n")
             prog[n["node_token"]] = str(n.get("obj_edit_time", ""))
             try:
-                json.dump(prog, open(prog_path, "w", encoding="utf-8"))
+                tmp = prog_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(prog, f)
+                os.replace(tmp, prog_path)
             except Exception:
                 pass  # 进度丢失可由已导出MD文件回收，不致命
             seen_union.add(n["node_token"])
