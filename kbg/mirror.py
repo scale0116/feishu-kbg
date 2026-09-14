@@ -16,7 +16,7 @@ from kbg.feishu import Feishu  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_TOKEN = "RTJiwZw9HiggNYk37B4cm7rdnZY"   # 合集根节点（研越信息租户，外部共享）
-CAP_PER_RUN = 200
+CAP_PER_RUN = 100000
 
 
 def safe_name(t: str) -> str:
@@ -94,6 +94,7 @@ def main():
             except Exception as e:
                 print(f"⚠ 读取失败 {n['title'][:30]}: {str(e)[:60]}", flush=True)
                 continue
+            time.sleep(0.3)
             fname = f"{safe_name(n['title'])}_{n['node_token'][-6:]}.md"
             with open(os.path.join(backup, fname), "w", encoding="utf-8") as f:
                 f.write(f"---\ntitle: {n['title']}\nsource: 记忆承载合集\n"
