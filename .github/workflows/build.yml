@@ -21,6 +21,8 @@ jobs:
         run: |
           git clone --depth 1 https://x-access-token:${{ secrets.DATA_PAT }}@github.com/scale0116/personal-knowledge-base.git data
           cp data/config.yaml data/state.yaml .
+          mkdir -p MD备份/专属合集
+          cp -r "data/MD备份/专属合集/记忆承载" MD备份/专属合集/
       - name: 批量建档（每篇含完整原文）
         env:
           BUILD_CAP: '300'
