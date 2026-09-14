@@ -61,13 +61,39 @@ def main():
     analysis = llm.chat(cfg, REVIEW_PROMPT,
                         "\n\n".join(materials)[:60000], temperature=0.4)
 
-    iso = time.localtime()
     title = f"{time.strftime('%Y')}-W{time.strftime('%W')} 知识复盘"
     wiki = yaml.safe_load(open(cfg["paths"]["state"], encoding="utf-8"))["wiki"]
-    node = fs.ureq("POST", f"/wiki/v2/spaces/{wiki['space_id']}/nodes",
-                   json={"obj_type": "docx", "title": title, "node_type": "origin",
-                         "parent_node_token": wiki["folders"]["05 每周知识复盘"]})
-    doc_id = node["node"]["obj_token"]
+    folder = wiki["folders"]["05 每周知识复盘"]
+
+    # 防重复：本周已有同名复盘则复用——有内容直接跳过，空壳（历史写入失败）就地补写
+    existing, page_token = None, ""
+    while True:
+        d = fs.ureq("GET", f"/wiki/v2/spaces/{wiki['space_id']}/nodes",
+                    params={"parent_node_token": folder, "page_size": 50, "page_token": page_token})
+        existing = next((n for n in d.get("items", []) if n["title"] == title), existing)
+        page_token = d.get("page_token", "")
+        if not d.get("has_more"):
+            break
+    if existing:
+        content = fs.ureq("GET", f"/docx/v1/documents/{existing['obj_token']}/raw_content").get("content", "")
+        if len(content.strip()) > len(title) + 50:
+            print(f"本周复盘已存在，跳过重复生成：{title}")
+            if state.get("ingest", {}).get("chat_id"):
+                try:
+                    link = f"https://{cfg['knowledge_base'].get('domain', '')}/wiki/{existing['node_token']}"
+                    fs.send_text(state["ingest"]["chat_id"],
+                                 f"📅 本周复盘已生成（素材{len(materials)}篇）：{link}")
+                except Exception as e:
+                    print("通知发送失败:", e)
+            return
+        print("发现同名空壳复盘（历史写入失败），就地补写内容")
+        doc_id, node_token = existing["obj_token"], existing["node_token"]
+    else:
+        node = fs.ureq("POST", f"/wiki/v2/spaces/{wiki['space_id']}/nodes",
+                       json={"obj_type": "docx", "title": title, "node_type": "origin",
+                             "parent_node_token": folder})
+        doc_id, node_token = node["node"]["obj_token"], node["node"]["node_token"]
+
     blocks = [{"block_type": 2,
                "text": {"elements": [{"text_run": {"content": ln.rstrip()}}], "style": {}}}
               for ln in analysis.splitlines() if ln.strip()]
@@ -78,7 +104,7 @@ def main():
 
     if state.get("ingest", {}).get("chat_id"):
         try:
-            link = f"https://{cfg['knowledge_base'].get('domain','')}/wiki/{node['node']['node_token']}"
+            link = f"https://{cfg['knowledge_base'].get('domain','')}/wiki/{node_token}"
             fs.send_text(state["ingest"]["chat_id"], f"📅 本周复盘已生成（素材{len(materials)}篇）：{link}")
         except Exception as e:
             print("通知发送失败:", e)
