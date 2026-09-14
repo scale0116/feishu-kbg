@@ -11,7 +11,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,7 +28,12 @@ jobs:
       - name: 数据回写
         if: always()
         run: |
-          cp state.yaml data/
+          SZ=$(stat -c%s state.yaml 2>/dev/null || echo 0)
+          if [ "$SZ" -lt 20000 ]; then
+            echo "⚠ state.yaml仅${SZ}字节，疑似损坏，拒绝回写state（MD照常回写）"
+          else
+            cp state.yaml data/
+          fi
           mkdir -p data/MD备份
           cp -r MD备份/* data/MD备份/ 2>/dev/null || true
           cd data
