@@ -1,14 +1,17 @@
 name: ingest
 on:
   schedule:
-    - cron: '4,14,24,34,44,54 * * * *'
+    - cron: '4,14,24,34,44,54 * * * *'   # cron仅作复活器（GitHub高峰期常跳过），正常节奏靠自续链
   workflow_dispatch: {}
 permissions:
   contents: read
+concurrency:
+  group: ingest-chain
+  cancel-in-progress: true   # 同一时刻只允许一轮入库，防止重复消费
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25      # 工作本身1-3分钟，其余是自续链的睡眠时间
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,7 +33,12 @@ jobs:
       - name: 数据回写
         if: always()
         run: |
-          cp config.yaml state.yaml data/
+          SZ=$(stat -c%s state.yaml 2>/dev/null || echo 0)
+          if [ "$SZ" -lt 20000 ]; then
+            echo "⚠ state.yaml仅${SZ}字节，疑似损坏，拒绝回写state（MD照常回写）"
+          else
+            cp config.yaml state.yaml data/
+          fi
           mkdir -p data/MD备份
           cp -r MD备份/* data/MD备份/ 2>/dev/null || true
           cd data
@@ -39,3 +47,13 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -m "data update $(date -u +%FT%TZ)"
           git push
+      - name: 10-15分钟后自续链
+        if: always()
+        run: |
+          SLEEP=$((600 + RANDOM % 300))
+          echo "等待 ${SLEEP} 秒后触发下一轮（GitHub cron高峰期常跳过，节奏以自续链为准）"
+          sleep $SLEEP
+          for i in 1 2 3; do
+            curl -s -X POST -H "Authorization: token ${{ secrets.DATA_PAT }}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/scale0116/feishu-kbg/actions/workflows/ingest.yml/dispatches -d '{"ref":"main"}' && break
+            sleep 15
+          done
