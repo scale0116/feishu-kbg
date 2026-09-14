@@ -1,14 +1,17 @@
 name: mirror
 on:
   schedule:
-    - cron: '0 13 * * *'    # UTC13:00 = 北京21:00 每日镜像
+    - cron: '23 */6 * * *'   # 低频复活器：自续链意外断开时每6小时拉起一次
   workflow_dispatch: {}
 permissions:
   contents: read
+concurrency:
+  group: mirror-chain
+  cancel-in-progress: true   # 同一时刻只允许一个镜像运行
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,6 +26,7 @@ jobs:
       - name: 镜像记忆承载合集
         run: python -m kbg.mirror
       - name: 数据回写
+        if: always()
         run: |
           cp state.yaml data/
           mkdir -p data/MD备份
@@ -33,3 +37,13 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -m "mirror update $(date -u +%FT%TZ)"
           git push
+      - name: 随机40-90分钟后自续链
+        if: always()
+        run: |
+          SLEEP=$((2400 + RANDOM % 3000))
+          echo "等待 ${SLEEP} 秒后触发下一轮（随机间隔，降低服务器压力）"
+          sleep $SLEEP
+          for i in 1 2 3; do
+            curl -s -X POST -H "Authorization: token ${{ secrets.DATA_PAT }}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/scale0116/feishu-kbg/actions/workflows/mirror.yml/dispatches -d '{"ref":"main"}' && break
+            sleep 15
+          done
