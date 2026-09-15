@@ -178,6 +178,8 @@ class Feishu:
         return d.get("items", [])
 
     def send_text(self, chat_id: str, text: str) -> dict:
+        # content 必须是合法JSON字符串：text里的换行/引号必须转义（f-string拼接会在多行文本时炸）
+        import json
         return self.req("POST", "/im/v1/messages?receive_id_type=chat_id",
                         json={"receive_id": chat_id, "msg_type": "text",
-                              "content": f'{{"text":"{text}"}}'})
+                              "content": json.dumps({"text": text}, ensure_ascii=False)})
