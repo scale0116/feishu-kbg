@@ -76,7 +76,7 @@ class Feishu:
             data = r.json()
             if data.get("code") == 0:
                 return data.get("data", {})
-            if data.get("code") in (99991663, 99991668) and attempt == 1 and self.state_path:
+            if data.get("code") in (99991663, 99991668, 99991677) and attempt == 1 and self.state_path:
                 self._force_refresh()
                 continue
             raise RuntimeError(f"{method} {path} 失败: {data}")
