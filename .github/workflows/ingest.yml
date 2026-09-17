@@ -29,6 +29,9 @@ jobs:
         run: python -m kbg.export_md
       - name: 失败时飞书告警
         if: failure()
+        env:
+          ALERT_PAT: ${{ secrets.DATA_PAT }}
+          ALERT_WF: ingest.yml
         run: python kbg/alert.py "ingest运行失败"
       - name: 数据回写
         if: always()
