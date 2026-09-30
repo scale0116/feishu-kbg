@@ -7,9 +7,9 @@ API = "https://open.feishu.cn/open-apis"
 
 
 def _atomic_dump_yaml(path: str, data: dict):
-    """state.yaml 原子写：先写临时文件再替换，进程中途被杀也不会留下空/半截文件。"""
+    """state.yaml 原子写：临时文件名带进程号（防多进程共用tmp互相截断），替换原子生效。"""
     import yaml
-    tmp = path + ".tmp"
+    tmp = f"{path}.tmp.{os.getpid()}"
     with open(tmp, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
     os.replace(tmp, path)
