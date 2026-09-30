@@ -32,7 +32,7 @@ def save_state(cfg, state):
     p = cfg["paths"]["state"]
     disk = yaml.safe_load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
     disk["themes"] = state.get("themes", {})
-    yaml.safe_dump(disk, open(p, "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
+    import kbg.feishu as _kf; _kf._atomic_dump_yaml(p, disk)
 
 
 def iter_corpus(md_backup):
