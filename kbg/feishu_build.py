@@ -31,10 +31,8 @@ def write_state_best_effort(cfg, build_section):
                 time.sleep(5)
                 continue
             disk["build"] = build_section
-            tmp = cfg_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                yaml.safe_dump(disk, f, allow_unicode=True, sort_keys=False)
-            os.replace(tmp, cfg_path)
+            from kbg.feishu import _atomic_dump_yaml
+            _atomic_dump_yaml(cfg_path, disk)
             return True
         except Exception:
             time.sleep(5)
