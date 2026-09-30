@@ -26,7 +26,10 @@ def save_state(section: dict):
     if os.path.exists(p):
         state = yaml.safe_load(open(p, encoding="utf-8")) or {}
     state.setdefault("user", {}).update(section)
-    import kbg.feishu as _kf; _kf._atomic_dump_yaml(p, state)
+    tmp = p + ".tmp." + str(os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(state, f, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, p)
 
 
 def exchange(code: str, cfg: dict) -> dict:
