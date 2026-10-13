@@ -35,33 +35,103 @@ class Feishu:
         self.state_path = None
         self._user_token = None
 
-    def load_user_token(self, state_path: str) -> str:
-        """从 state.yaml 读用户token，过期则用 refresh_token 续期（带文件锁防并发互踢）。"""
+    # ---- 令牌自愈通道（根治多链刷新竞争）：刷新失败→拉仓库他方新令牌重试；成功→立即发布 ----
+    def _pull_repo_user(self) -> dict:
+        """从数据仓库拉取 state.user 段（他方刚刷新并发布的令牌）。"""
+        import base64
+        import json
         import yaml
+        try:
+            cfg = yaml.safe_load(open(os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "config.yaml"), encoding="utf-8"))
+            gh = cfg.get("github", {})
+            if not gh.get("pat"):
+                return {}
+            H = {"Authorization": f"token {gh['pat']}", "Accept": "application/vnd.github+json"}
+            tree = requests.get(f"https://api.github.com/repos/{gh['repo']}/git/trees/main",
+                                headers=H, timeout=20).json()
+            blob_sha = next(t["sha"] for t in tree["tree"] if t["path"] == "state.yaml")
+            b = requests.get(f"https://api.github.com/repos/{gh['repo']}/git/blobs/{blob_sha}",
+                             headers=H, timeout=20).json()
+            remote = yaml.safe_load(base64.b64decode(b["content"]))
+            return remote.get("user", {}) if isinstance(remote, dict) else {}
+        except Exception:
+            return {}
+
+    def _publish_user(self, user: dict):
+        """刷新成功后立即把 user 段发布到数据仓库（越快发布，竞争窗口越小）。"""
+        import base64
+        import json
+        import yaml
+        try:
+            cfg = yaml.safe_load(open(os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "config.yaml"), encoding="utf-8"))
+            gh = cfg.get("github", {})
+            if not gh.get("pat"):
+                return
+            H = {"Authorization": f"token {gh['pat']}", "Accept": "application/vnd.github+json"}
+            api = f"https://api.github.com/repos/{gh['repo']}/contents/state.yaml"
+            full = yaml.safe_load(open(self.state_path, encoding="utf-8"))
+            full["user"] = user
+            content = yaml.safe_dump(full, allow_unicode=True, sort_keys=False)
+            g = requests.get(api, headers=H, timeout=20).json()
+            body = {"message": "token publish", "content": base64.b64encode(content.encode()).decode()}
+            if g.get("sha"):
+                body["sha"] = g["sha"]
+            requests.put(api, headers=H, data=json.dumps(body), timeout=20)
+        except Exception:
+            pass  # 发布失败不致命：工作流回写步骤会兜底
+
+    def _refresh(self, state: dict) -> dict:
+        """刷新并返回新的user段；refresh_token被抢用时自动从仓库取他方令牌重试一次。"""
+        r = requests.post(
+            "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
+            json={"grant_type": "refresh_token", "client_id": self.app_id,
+                  "client_secret": self.app_secret,
+                  "refresh_token": state["refresh_token"]},
+            timeout=15,
+        ).json()
+        if r.get("code") not in (0, None):
+            err = f"{r.get('error', '')} {r.get('code', '')}"
+            if "invalid_grant" in err or "20037" in err or "20064" in err:
+                remote = self._pull_repo_user()
+                if remote.get("refresh_token") and remote["refresh_token"] != state["refresh_token"]:
+                    r2 = requests.post(
+                        "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
+                        json={"grant_type": "refresh_token", "client_id": self.app_id,
+                              "client_secret": self.app_secret,
+                              "refresh_token": remote["refresh_token"]},
+                        timeout=15,
+                    ).json()
+                    if r2.get("code") in (0, None):
+                        return {"access_token": r2["access_token"],
+                                "refresh_token": r2.get("refresh_token", remote["refresh_token"]),
+                                "expire_at": time.time() + int(r2.get("expires_in", 6900))}
+            raise RuntimeError(f"刷新user token失败: {r}")
+        return {"access_token": r["access_token"],
+                "refresh_token": r.get("refresh_token", state["refresh_token"]),
+                "expire_at": time.time() + int(r.get("expires_in", 6900))}
+
+    def _save_user(self, user: dict):
+        import yaml
+        full = yaml.safe_load(open(self.state_path, encoding="utf-8"))
+        full["user"] = user
+        _atomic_dump_yaml(self.state_path, full)
+        self._user_token = user["access_token"]
+        self._publish_user(user)  # 立即发布，压缩竞争窗口
+
+    def load_user_token(self, state_path: str) -> str:
+        """从 state.yaml 读用户token，过期则刷新；竞争失败自愈（拉仓库他方令牌）。"""
         self.state_path = state_path
         lock = open(state_path + ".lock", "a+")
         _lock_fh(lock, True)
         try:
+            import yaml
             state = yaml.safe_load(open(state_path, encoding="utf-8")).get("user", {})
             if time.time() < state.get("expire_at", 0) - 120:
                 self._user_token = state["access_token"]
                 return self._user_token
-            r = requests.post(
-                "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
-                json={"grant_type": "refresh_token", "client_id": self.app_id,
-                      "client_secret": self.app_secret,
-                      "refresh_token": state["refresh_token"]},
-                timeout=15,
-            ).json()
-            if r.get("code") not in (0, None):
-                raise RuntimeError(f"刷新user token失败: {r}")
-            state["access_token"] = r["access_token"]
-            state["refresh_token"] = r.get("refresh_token", state["refresh_token"])
-            state["expire_at"] = time.time() + int(r.get("expires_in", 6900))
-            full = yaml.safe_load(open(self.state_path, encoding="utf-8"))
-            full["user"] = state
-            _atomic_dump_yaml(self.state_path, full)
-            self._user_token = state["access_token"]
+            self._save_user(self._refresh(state))
             return self._user_token
         finally:
             _lock_fh(lock, False)
@@ -83,25 +153,10 @@ class Feishu:
         raise RuntimeError(f"{method} {path} 重试后仍失败")
 
     def _force_refresh(self):
-        """无视本地过期时间，强制用 refresh_token 换新 token。"""
+        """无视本地过期时间，强制刷新（含竞争自愈）。"""
         import yaml
         state = yaml.safe_load(open(self.state_path, encoding="utf-8")).get("user", {})
-        r = requests.post(
-            "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
-            json={"grant_type": "refresh_token", "client_id": self.app_id,
-                  "client_secret": self.app_secret,
-                  "refresh_token": state["refresh_token"]},
-            timeout=15,
-        ).json()
-        if r.get("code") not in (0, None):
-            raise RuntimeError(f"刷新user token失败: {r}")
-        state["access_token"] = r["access_token"]
-        state["refresh_token"] = r.get("refresh_token", state["refresh_token"])
-        state["expire_at"] = time.time() + int(r.get("expires_in", 6900))
-        full = yaml.safe_load(open(self.state_path, encoding="utf-8"))
-        full["user"] = state
-        _atomic_dump_yaml(self.state_path, full)
-        self._user_token = state["access_token"]
+        self._save_user(self._refresh(state))
 
     def token(self) -> str:
         if self._token and time.time() < self._expire_at - 120:
